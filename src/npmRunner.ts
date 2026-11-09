@@ -42,6 +42,9 @@ const npxMatcher = /(^|\\|\/)npx-cli\.js$/
 
 const jsMatcher = /\.[cm]?js$/
 
+const winExeMatcher = /\.(exe|com)$/i
+const winCmdMatcher = /\.(cmd|bat)$/i
+
 /**
  * @throws {Error} when npm path unexpected
  */
@@ -69,18 +72,35 @@ function getExecPath (process_: NodeJS.Process, console_: Console): string | und
   throw new Error(`unexpected NPM execPath: ${execPath}`)
 }
 
+function getSystemNpmPath (process_: NodeJS.Process, console_: Console): string {
+  console_.debug('DEBUG | lookup system NPM...')
+  const npmPath = isWindows(process_)
+    ? execSync('where npm').toString().split(/\r?\n/).find(s => winExeMatcher.test(s) || winCmdMatcher.test(s))
+    : execSync('which npm').toString().trim()
+  if (npmPath === undefined || npmPath === '') {
+    throw new Error('missing system NPM')
+  }
+  console_.debug('DEBUG | system NPM found: %s', npmPath)
+  return npmPath
+}
+
+function isWindows (process_: NodeJS.Process): boolean {
+  return process_.platform.startsWith('win')
+}
+
 export function makeNpmRunner (process_: NodeJS.Process, console_: Console): runFunc {
   const execPath = getExecPath(process_, console_)
-  if (execPath === undefined) {
-    console_.debug('DEBUG | makeNpmRunner caused execSync "npm"')
-    // not shell-save - but this is okay four our use case - since we have complete control over `args` in the caller.
-    return (args, options) => execSync('npm ' + args.join(' '), options)
-  }
+                ?? getSystemNpmPath(process_, console_)
 
   if (jsMatcher.test(execPath)) {
     const nodeExecPath = process_.execPath
-    console_.debug('DEBUG | makeNpmRunner caused execFileSync "%s" with  "-- %s"', nodeExecPath, execPath)
+    console_.debug('DEBUG | makeNpmRunner caused execFileSync "%s" with "-- %s"', nodeExecPath, execPath)
     return (args, options) => execFileSync(nodeExecPath, ['--', execPath, ...args], options)
+  }
+
+  if (isWindows(process_) && winCmdMatcher.test(execPath)) {
+    console_.debug('DEBUG | makeNpmRunner caused execFileSync "cmd.exe" with "/c %s"', execPath)
+    return (args, options) => execFileSync('cmd.exe', ['/c', execPath, ...args], options)
   }
 
   console_.debug('DEBUG | makeNpmRunner caused execFileSync "%s"', execPath)
